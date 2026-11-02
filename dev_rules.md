@@ -59,7 +59,7 @@ Stack files only add or specialise; when a stack file and this file seem to conf
 
 ## 5. The size gate
 
-One script, `scripts/size_gate.py`: Python 3, standard library only, under about 100 lines, the same file in every repository whatever the stack. Run it with `python3 scripts/size_gate.py` first in CI and in the pre-commit hook. It must:
+One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only, under about 100 lines, the same file in every repository whatever the stack. Run it with `python3 scripts/size_gate.py` first in CI and in the pre-commit hook. It must:
 
 1. List files with `git ls-files --cached --others --exclude-standard`; classify each as product, test code, test data, docs, build or generated (lock files count to total size, not code size).
 2. Print a table of files and lines per class, and fail (exit 1) when any budget is exceeded.
@@ -90,11 +90,12 @@ One script, `scripts/size_gate.py`: Python 3, standard library only, under about
 - Check prerequisites first and fail fast. Label setup failures `SETUP:`; a setup failure is neither a pass nor a product failure.
 - When a test fails, keep the failing case and rerun it unchanged after the fix. If the expectation was wrong, say so in the commit.
 - Keep test data small and hand-written; the minimum rows that exercise each rule.
-- Integration tests run against the real database engine. Server engines are started by the tests themselves with Testcontainers for the stack's language; SQLite uses a file in a temporary directory. Never an in-memory substitute, a compose file or a CI service container. The same test command runs locally and in CI; Docker is the only prerequisite.
+- Integration tests run against the real database engine. Server engines are started by the tests themselves with Testcontainers for the stack's language; SQLite uses a file in a temporary directory. Start one container per test process; give every test its own database, built by the `migrate` runner. Never an in-memory substitute, a compose file or a CI service container. The same test command runs locally and in CI; Docker is the only prerequisite.
 - One test project or package per product unit unless the budget says otherwise.
 
 ## 9. Databases
 
+- A server database is PostgreSQL; use SQL Server only when the organisation already runs it. Use SQLite only as `dev_rules_sqlite.md` allows.
 - Schema changes are numbered, forward-only, plain SQL files: `migrations/0001_create_orders.sql`. No migration framework and no ORM migrations.
 - Apply them with a small runner in the host language, using only the standard library and the database driver. It records each applied version in a `schema_migrations` table (`version`, `applied_at`) and runs each file and its version row in one transaction. A file whose first line is `-- no-transaction` runs outside a transaction; use it only for statements the engine forbids inside one.
 - The runner is a `migrate` subcommand of the application. It connects as the schema-owner identity; the application never migrates at start-up.
