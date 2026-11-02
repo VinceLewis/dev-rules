@@ -10,7 +10,7 @@ Every rule names one way to do a thing. Never offer or pick an alternative. When
 2. Import them from `CLAUDE.md`, one line each, for example: `@docs/rules/dev_rules.md` and `@docs/rules/dev_rules_dotnet.md`.
 3. Add the size gate (section 5), the pre-commit hook (section 6) and the CI workflow (section 13) in the first commit, before any feature code.
 4. Delete the stack files you do not use. Project-specific rules go in `CLAUDE.md`, never in these files.
-5. In an existing repository, new code follows these rules. Bring existing code into line only when the change's scope includes it, never as a side effect.
+5. In an existing repository, new code follows these rules. Bring existing code into line only when the change's scope includes it, never as a side effect. Record existing breaches of the file and line-width caps as `legacy` entries (section 4) in the adoption commit.
 
 ## Index
 
@@ -59,7 +59,8 @@ Stack files only add or specialise; when a stack file and this file seem to conf
 
 - Keep `size-budget.json` in the repository root, with limits for: tracked files, total lines, product code lines, test code lines, test data files and lines, docs lines, lines per file (300), line width (120 characters), projects or packages, interfaces, and allowed top-level directories.
 - After each milestone, set every budget to actual plus 15%.
-- No source file exceeds 500 lines, so an agent can read and edit the whole file in one pass. The lines-per-file budget is never ratcheted or raised past 500; split the file by responsibility instead. Source files are product code, test code, scripts and CI files; docs, data, test data, generated and lock files are exempt.
+- No source file exceeds 500 lines, so an agent can read and edit the whole file in one pass. The lines-per-file budget is never ratcheted or raised past 500; split the file by responsibility instead. The only exception is a `legacy` entry (next rule), which can only fall. Source files are product code, test code, scripts and CI files; docs, data, test data, generated and lock files are exempt.
+- In an existing repository, list each source file over 500 lines or with lines over the width budget under `legacy` in `size-budget.json`: its path, line count and number of wide lines. Each figure may only fall, with no headroom: the gate fails when a file exceeds its figures or a figure is above the actual value, so it is lowered in the change that earned it. Remove the entry once the file complies. An entry added after the adoption commit is a budget raise. The 15% headroom applies only to the other budgets.
 - A slice's size estimate is its budget: set caps to actual plus the estimate, not a round number. A slice that grows past its estimate says why in one line, even when it is under the cap.
 - Budgets limit bloat, not readability. One statement per line. Near a cap, delete duplication or ask to raise the budget; never compress to fit: no joined statements, dense one-liners, packed expressions or shortened names.
 - Raising a budget needs the owner's approval in the pull request and a one-line reason in `size-budget.json`.
@@ -67,7 +68,7 @@ Stack files only add or specialise; when a stack file and this file seem to conf
 
 ## 5. The size gate
 
-One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only, under about 150 lines, the same file in every repository whatever the stack. Run it with `python3 scripts/size_gate.py` first in CI and in the pre-commit hook. It must:
+One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only, under about 200 lines, the same file in every repository whatever the stack. Run it with `python3 scripts/size_gate.py` first in CI and in the pre-commit hook. It must:
 
 1. List files with `git ls-files --cached --others --exclude-standard`; classify each as product, test code, test data, docs, build or generated (lock files count to total size, not code size).
 2. Print a table of files and lines per class, and fail (exit 1) when any budget is exceeded.
@@ -77,8 +78,11 @@ One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only,
 6. Fail on product string literals that look like connection strings, absolute paths, IP addresses, 64-character hex hashes or secrets.
 7. Fail on skip and focus markers in test code: `t.Skip`, `Skip =`, `Assert.Skip`, `pytest.mark.skip`, `pytest.skip(`, `pytest.mark.xfail`, `.skip(`, `.only(`, `.todo(` and a bats `skip` line.
 8. With `--commits <base>..HEAD`, fail on each commit in the range that changes product code but no test code, unless its subject starts with `Refactor:`. CI passes the range (section 13); the pre-commit hook does not.
-9. Fail on any line of code or CI file wider than the line-width budget, so line budgets cannot be met by widening lines. JSON and XML data files, Markdown prose and test data are exempt.
-10. Fail on any source file over 500 lines (section 4), whatever `size-budget.json` says.
+9. Fail on any line of code or CI file wider than the line-width budget, so line budgets cannot be met by widening lines. JSON and XML data files, Markdown prose and test data are exempt. A `legacy` file fails when its wide lines exceed its recorded number.
+10. Fail on any source file over 500 lines (section 4), whatever the other budgets say. A `legacy` file fails when it exceeds its recorded line count.
+11. Fail on any `legacy` figure above the file's actual value, and on an entry for a file that complies or no longer exists.
+
+The gate's test is `scripts/size_gate_test.py`: standard-library `unittest`, run with `python3 scripts/size_gate_test.py`, the same file in every repository. For each check above it builds a temporary Git repository with one seeded breach and asserts exit 1; a clean repository exits 0. A check that has never been seen to fail proves nothing.
 
 ## 6. Git is the history
 
@@ -129,7 +133,7 @@ One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only,
 - Each test run gets fresh, isolated resources: its own database, temporary directory, port and identities. Never reuse a dirty baseline or a warm stand.
 - Every UI and journey test creates its own user and data through the public API and removes them in its own cleanup; no shared seeded users.
 - A gate passes only on a test command's exit status, never on report files, timestamps or hand-typed counts.
-- Check prerequisites first and fail fast. Label setup failures `SETUP:`; a setup failure is neither a pass nor a product failure.
+- Check prerequisites first and fail fast. Every check, including the size gate, the pre-commit hook and each CI step, ends as pass, fail or `SETUP:`, meaning it could not run. `SETUP:` is neither a pass nor a product failure: it exits non-zero and is never green.
 - Keep test data small and hand-written; the minimum rows that exercise each rule.
 - Integration tests run against the real database engine. Server engines, and every other service the tests need (for example an auth server), are started by the tests themselves with Testcontainers for the stack's language, on one network per run; SQLite uses a file in a temporary directory. Start one container per test process; give every test its own database, built by the `migrate` runner. Never an in-memory substitute, a compose file or a CI service container. The same test command runs locally and in CI; Docker is the only prerequisite.
 - One test project or package per product unit unless the budget says otherwise.
@@ -192,7 +196,7 @@ An agent without these skills does the same two passes by hand: a simplification
 ## 13. CI
 
 - CI builds from the repository alone: every build input is tracked or pinned. Never replace CI with a local hook.
-- One GitHub Actions workflow, `.github/workflows/ci.yml`, on `ubuntu-latest`, running on pull requests and pushes to the main branch. Check out with `fetch-depth: 0` and run the size gate with `--commits` over the pull request's commits or the pushed range. Steps, fastest first: size gate, `gitleaks`, locked restore, build with warnings as errors, format check, lint, tests (Testcontainers needs no service setup).
+- One GitHub Actions workflow, `.github/workflows/ci.yml`, on `ubuntu-latest`, running on pull requests and pushes to the main branch. Check out with `fetch-depth: 0` and run the size gate with `--commits` over the pull request's commits or the pushed range. Steps, fastest first: size gate test, size gate, `gitleaks`, locked restore, build with warnings as errors, format check, lint, tests (Testcontainers needs no service setup).
 - No scheduled jobs, and no extra workflows until a second deployment target exists.
 - A green CI run is necessary, not sufficient: the end-to-end test must also pass.
 
