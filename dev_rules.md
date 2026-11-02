@@ -203,6 +203,8 @@ An agent without these skills does the same two passes by hand: a simplification
 ## 14. AI agents
 
 - One agent by default. Use at most 4 in parallel, only on disjoint paths, each with an explicitly assigned model and effort.
+- Build in parallel only when all three hold: each agent owns disjoint files in its own worktree; the shared contract (records, entry points, formats) is written and committed before they start; and branches merge one at a time, with the full gate rerun after each merge. Work on shared core code stays serial. Read-only reviews may always run in parallel.
+- To parallelise shared-core work, first commit a skeleton that fixes the contract and stubs each packet's file, then give each packet one stub to replace, with its own tests.
 - Give each agent a short task: inputs, expected result, forbidden effects, paths it may change. No pasted history.
 - No process apparatus: no ledgers, slot files, pipeline tools, route indexes or handoff directories in the repository.
 - An agent stops when the task's done conditions are met; it does not add extra improvements, tests or docs.
