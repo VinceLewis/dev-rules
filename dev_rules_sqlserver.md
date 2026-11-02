@@ -11,7 +11,7 @@ Adds to `dev_rules.md` for T-SQL on SQL Server 2022 or 2025 and Azure SQL.
 
 ## Tooling
 
-- Lint and format check: `sqlfluff lint` in CI, with `dialect = tsql` in `.sqlfluff` and the version pinned in the step (`pipx run --spec sqlfluff==4.5.0 sqlfluff lint`). Fix layout locally with `sqlfluff format`.
+- Lint and format check: `sqlfluff lint` in CI, with `dialect = tsql` and `max_line_length = 120` in `.sqlfluff` and the version pinned in the step (`pipx run --spec sqlfluff==4.5.0 sqlfluff lint`). Fix layout locally with `sqlfluff format`.
 - Test from the host language with the Testcontainers SQL Server module, setting the image explicitly to `mcr.microsoft.com/mssql/server:2025-latest`; use `2022-latest` only when production runs SQL Server 2022.
 - Test procedures by calling them from those tests. No tSQLt.
 - Every test creates a uniquely named database and applies the migrations to it with the `migrate` runner.

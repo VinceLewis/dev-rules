@@ -12,7 +12,7 @@ Adds to `dev_rules.md` for C# on .NET. Current baseline: .NET 10 LTS, C# 14.
 
 ## Tooling
 
-- Format: `dotnet format --verify-no-changes` in CI, driven by `.editorconfig`.
+- Format: `dotnet format --verify-no-changes` in CI, driven by `.editorconfig` with `max_line_length = 120`. `dotnet format` does not wrap long lines; wrap them by hand, and the size gate enforces the width.
 - Lint: the built-in Roslyn analysers at `latest-recommended`, run by `dotnet build`. No third-party analyser packages.
 - Test: xUnit v3 (`xunit.v3`) on Microsoft.Testing.Platform, run with `dotnet test`. Assert with xUnit's `Assert`; no assertion library.
 - Dependencies: Central Package Management (`Directory.Packages.props`), `RestorePackagesWithLockFile` true, and `dotnet restore --locked-mode` in CI.

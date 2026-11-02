@@ -16,7 +16,7 @@ Adds to `dev_rules.md` for shell scripts and shell steps in CI.
 ## Tooling
 
 - Lint: `shellcheck` on every `*.sh` file and on `.githooks/pre-commit` in CI, with no blanket disables; each `# shellcheck disable=` names the rule and gives a reason.
-- Format: `shfmt -d -i 2 -ci` in CI.
+- Format: `shfmt -d -i 2 -ci` in CI. `shfmt` does not wrap long lines; break them with `\` at argument boundaries, and the size gate enforces the width.
 - Test: a script containing `if`, `case` or a loop gets a `bats-core` test in `tests/<script>.bats`, run by `bats tests/` in CI and one at a time with `bats --filter '<name>' tests/<script>.bats`; other scripts are tested by the CI step that uses them.
 - Target Bash 5 with GNU coreutils on Linux (`ubuntu-latest`). macOS is not supported.
 

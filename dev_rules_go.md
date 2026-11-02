@@ -10,7 +10,7 @@ Adds to `dev_rules.md` for Go 1.27.
 
 ## Tooling
 
-- Format: `gofmt`. CI fails unless `test -z "$(gofmt -l .)"`.
+- Format: `gofmt`. CI fails unless `test -z "$(gofmt -l .)"`. `gofmt` does not wrap long lines; wrap them by hand, and the size gate enforces the width.
 - Lint: `golangci-lint run` with a v2 `.golangci.yml` enabling `errcheck`, `staticcheck`, `govet`, `ineffassign`, `unused`, `bodyclose`, `sqlclosecheck` and `rowserrcheck`.
 - Test against real dependencies; no SQL mocking library such as `go-sqlmock`, and no package-level function variables swapped by tests.
 - Test: `go test -race -count=1 ./...`; table-driven tests with literal cases and named `t.Run` subtests; `t.TempDir()` and `t.Context()` for isolation. Assert with the standard `testing` package only; no `testify` or other assertion library. Run one case with `go test -run '^TestName$/^case$' ./<pkg>`.

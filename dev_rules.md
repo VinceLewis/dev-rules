@@ -57,8 +57,10 @@ Stack files only add or specialise; when a stack file and this file seem to conf
 
 ## 4. Size budgets and the ratchet
 
-- Keep `size-budget.json` in the repository root, with limits for: tracked files, total lines, product code lines, test code lines, test data files and lines, docs lines, lines per file (300), projects or packages, interfaces, and allowed top-level directories.
+- Keep `size-budget.json` in the repository root, with limits for: tracked files, total lines, product code lines, test code lines, test data files and lines, docs lines, lines per file (300), line width (120 characters), projects or packages, interfaces, and allowed top-level directories.
 - After each milestone, set every budget to actual plus 15%.
+- A slice's size estimate is its budget: set caps to actual plus the estimate, not a round number. A slice that grows past its estimate says why in one line, even when it is under the cap.
+- Budgets limit bloat, not readability. One statement per line. Near a cap, delete duplication or ask to raise the budget; never compress to fit: no joined statements, dense one-liners, packed expressions or shortened names.
 - Raising a budget needs the owner's approval in the pull request and a one-line reason in `size-budget.json`.
 - Every change states its net line change. A change that grows code says why in one line.
 
@@ -74,6 +76,7 @@ One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only,
 6. Fail on product string literals that look like connection strings, absolute paths, IP addresses, 64-character hex hashes or secrets.
 7. Fail on skip and focus markers in test code: `t.Skip`, `Skip =`, `Assert.Skip`, `pytest.mark.skip`, `pytest.skip(`, `pytest.mark.xfail`, `.skip(`, `.only(`, `.todo(` and a bats `skip` line.
 8. With `--commits <base>..HEAD`, fail on each commit in the range that changes product code but no test code, unless its subject starts with `Refactor:`. CI passes the range (section 13); the pre-commit hook does not.
+9. Fail on any line of code or CI file wider than the line-width budget, so line budgets cannot be met by widening lines. JSON and XML data files, Markdown prose and test data are exempt.
 
 ## 6. Git is the history
 
@@ -176,7 +179,7 @@ Diagnose live problems from logs and request IDs, never from a debug mode.
 
 The agent that made the change runs the review before it pushes, once the change is complete and its tests pass.
 
-1. Run `/simplify`, then rerun the whole suite. Revert any simplification that changes behaviour or breaks these rules; these rules win over the skill.
+1. Run `/simplify`, then rerun the whole suite. Revert any simplification that changes behaviour or breaks these rules; these rules win over the skill. Also revert any that saves lines by making code harder to read (section 4).
 2. Run `/code-review medium` with no target, which reviews the unpushed commits and uncommitted changes. Use `/code-review high` when the change touches authorisation, transactions, security or a data format. Never `--fix`, and no second reviewer.
 3. For each confirmed bug, write a failing test, then fix it (section 8). Report findings outside the change's scope; do not fix them.
 4. One pass of each. Rerun `/code-review` only after fixing authorisation or security code.
@@ -227,6 +230,7 @@ Drawn from one repository that grew to 326k lines without ever running end to en
 - 115 worktrees and 160 branches left in place.
 - A message broker, file journal and self-verification layers for a synchronous one-row-at-a-time write.
 - A CLI entry point that printed "not available" while CI reported green.
+- In the 4.5k rewrite, line budgets met by cramming: 278 lines over 120 characters, the widest 292, and statements joined on one line, until the size gate also limited line width.
 
 From one live production app:
 

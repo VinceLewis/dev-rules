@@ -7,7 +7,7 @@ Adds to `dev_rules.md` for PostgreSQL 18.
 - Follow `dev_rules.md` section 9. PostgreSQL DDL is transactional, so every file runs in the runner's transaction unless its first line is `-- no-transaction`.
 - Put each `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY` or `REINDEX CONCURRENTLY` alone in its own `-- no-transaction` file: PostgreSQL runs a multi-statement string as one implicit transaction, which these statements reject. If one fails, drop the `INVALID` index it leaves before rerunning. Use `CONCURRENTLY` only on tables that exist in a released database.
 - Lint `migrations/*.sql` with `squawk` in the CI lint step to catch locking and rewrite hazards. Keep `.squawk.toml` in the repository root with `pg_version = "18.0"` and `assume_in_transaction = true`; the second line of every `-- no-transaction` file is `-- squawk-disable-assume-in-transaction`.
-- Lint and format-check SQL with `sqlfluff lint` in CI, with `dialect = postgres` in `.sqlfluff` and the version pinned in the step (`pipx run --spec sqlfluff==4.5.0 sqlfluff lint`). Fix layout locally with `sqlfluff format`.
+- Lint and format-check SQL with `sqlfluff lint` in CI, with `dialect = postgres` and `max_line_length = 120` in `.sqlfluff` and the version pinned in the step (`pipx run --spec sqlfluff==4.5.0 sqlfluff lint`). Fix layout locally with `sqlfluff format`.
 
 ## Testing
 
