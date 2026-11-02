@@ -59,6 +59,7 @@ Stack files only add or specialise; when a stack file and this file seem to conf
 
 - Keep `size-budget.json` in the repository root, with limits for: tracked files, total lines, product code lines, test code lines, test data files and lines, docs lines, lines per file (300), line width (120 characters), projects or packages, interfaces, and allowed top-level directories.
 - After each milestone, set every budget to actual plus 15%.
+- No source file exceeds 500 lines, so an agent can read and edit the whole file in one pass. The lines-per-file budget is never ratcheted or raised past 500; split the file by responsibility instead. Source files are product code, test code, scripts and CI files; docs, data, test data, generated and lock files are exempt.
 - A slice's size estimate is its budget: set caps to actual plus the estimate, not a round number. A slice that grows past its estimate says why in one line, even when it is under the cap.
 - Budgets limit bloat, not readability. One statement per line. Near a cap, delete duplication or ask to raise the budget; never compress to fit: no joined statements, dense one-liners, packed expressions or shortened names.
 - Raising a budget needs the owner's approval in the pull request and a one-line reason in `size-budget.json`.
@@ -77,6 +78,7 @@ One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only,
 7. Fail on skip and focus markers in test code: `t.Skip`, `Skip =`, `Assert.Skip`, `pytest.mark.skip`, `pytest.skip(`, `pytest.mark.xfail`, `.skip(`, `.only(`, `.todo(` and a bats `skip` line.
 8. With `--commits <base>..HEAD`, fail on each commit in the range that changes product code but no test code, unless its subject starts with `Refactor:`. CI passes the range (section 13); the pre-commit hook does not.
 9. Fail on any line of code or CI file wider than the line-width budget, so line budgets cannot be met by widening lines. JSON and XML data files, Markdown prose and test data are exempt.
+10. Fail on any source file over 500 lines (section 4), whatever `size-budget.json` says.
 
 ## 6. Git is the history
 
