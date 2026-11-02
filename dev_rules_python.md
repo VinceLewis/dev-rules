@@ -26,7 +26,7 @@ Adds to `dev_rules.md` for Python 3.14.
 - Validate all external input (HTTP, files, environment) at the boundary with Pydantic v2 models and use the model as the type; never hand-write a parser and a type for the same shape. Use `dataclasses` (`frozen=True, slots=True`) for internal data.
 - No classes for code that is just functions. `abc.ABC` subclasses and `typing.Protocol` classes count as interfaces (`dev_rules.md` section 2).
 - Catch specific exceptions; never bare `except:` or `except Exception: pass`. Re-raise with `raise … from err`.
-- Read configuration from `argparse` and `os.environ` at the entry point and pass it down; no global settings objects. Each command, including `migrate`, is an `argparse` subcommand.
+- Read settings (`dev_rules.md` section 3) from the `--config` file into one Pydantic model with `model_config = ConfigDict(extra="forbid", frozen=True)` and no field defaults, and secrets from `os.environ`, at the entry point; pass them down. No global settings objects. Each command, including `migrate`, is an `argparse` subcommand.
 - Call `subprocess.run([...], check=True)` with a list, never `shell=True` with interpolated strings.
 - Open files with an explicit `encoding="utf-8"` and `newline=""` for CSV.
 

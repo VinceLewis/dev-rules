@@ -24,6 +24,8 @@ Every rule names one way to do a thing. Never offer or pick an alternative. When
 | `dev_rules_typescript.md` | `package.json` or `tsconfig.json` |
 | `dev_rules_python.md` | `pyproject.toml` or `*.py` beyond a one-file script |
 | `dev_rules_bash.md` | any `*.sh` file or shell step in CI longer than 3 lines |
+| `dev_rules_web.md` | an HTTP server or a browser UI |
+| `dev_rules_deploy.md` | a service deployed to a Linux server |
 
 Stack files only add or specialise; when a stack file and this file seem to conflict, the stack file wins for that stack.
 
@@ -39,16 +41,18 @@ Stack files only add or specialise; when a stack file and this file seem to conf
 - Name the requirement or reproduced bug before adding any complexity. If you cannot, do not add it.
 - No interface, abstract base, wrapper, factory, adapter or plug-in point without two real implementations or callers today. Test doubles do not count unless the real dependency is unusable in tests.
 - No extra project, package, module or service until one would exceed its size budget or needs a separate deployment.
-- No configuration option without a user who sets it to two different values.
+- No feature option or mode without a user who sets it to two different values. Operational values are settings (section 3), not options.
 - Use the standard library and the platform's built-in features. Where a stack file names a third-party package as the standard, use that package; never write your own or choose a different one.
 - Prefer one longer obvious function over five short indirect ones; split on reuse or the file limit, not on taste.
 - Synchronous and in-process first. Queues, brokers, caches and background workers need a measured reason.
 
 ## 3. No hard-coding
 
-- Product code must not contain names, values, counts, totals, hashes, paths, URLs or connection strings that belong to data. They come from input data, command-line flags or environment variables. Secrets and connection strings come from environment variables only.
+- Product code must not contain names, values, counts, totals, hashes, paths, URLs or connection strings that belong to data, nor operational values: timeouts, sizes, limits, rates, retention, addresses, log level or header policy.
+- Data comes from input. Per-run inputs come from command-line arguments. Operational values come from one JSON settings file named by `--config`: snake_case keys, units in the key name (`read_timeout_seconds`, `max_body_bytes`), every key required, unknown keys rejected, validated at start-up, no defaults in code. JSON because every stack parses it with its standard library. Secrets and connection strings come from environment variables only, never the settings file.
+- The production settings file lives in the repository (`dev_rules_deploy.md`); each test writes its own.
 - Hard-coded data is allowed only in tests and test data.
-- Product code never reads from test folders and never branches on "test mode". Allow at most one named, internal fault-injection point.
+- Product code never reads from test folders and never branches on "test mode". No test-only endpoints, commands or code paths in the product build, even behind a flag or variable: tests set up and clean up through the public API or their own database. Allow at most one named, internal fault-injection point. Diagnostics (section 10) are product features, not test code.
 - Enforced by the literal scan (section 5).
 
 ## 4. Size budgets and the ratchet
@@ -64,7 +68,7 @@ One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only,
 
 1. List files with `git ls-files --cached --others --exclude-standard`; classify each as product, test code, test data, docs, build or generated (lock files count to total size, not code size).
 2. Print a table of files and lines per class, and fail (exit 1) when any budget is exceeded.
-3. Fail on forbidden paths: versioned copies (`*-v[0-9]*.*`, `*_old.*`, `*.bak`, `*.orig`, `*.py.txt`-style frozen copies), evidence, handoff and ledger directories, and generated indexes.
+3. Fail on forbidden paths: versioned copies (`*-v[0-9]*.*`, `*_old.*`, `*.bak`, `*.orig`, `*.py.txt`-style frozen copies), evidence, handoff and ledger directories, generated indexes, and files gitleaks cannot inspect: binaries (`*.exe`, `*.dll`, `*.so`), office documents (`*.docx`, `*.xlsx`, `*.pdf`), database dumps and backups (`*.dump`, `*.backup`, `*.bak`, `*backup*.sql`).
 4. Count interface or abstract declarations in product code and fail above budget.
 5. **Literal scan:** collect every identifier and value of 3 or more characters from test data (headers, cells, keys, names, totals, hashes) and fail if any appears in product code, matched on word boundaries. Keep an explicit allow-list for genuine collisions, each with a reason.
 6. Fail on product string literals that look like connection strings, absolute paths, IP addresses, 64-character hex hashes or secrets.
@@ -111,14 +115,18 @@ One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only,
   - each combination of conditions with a distinct outcome;
   - each state change, including recovery after an error.
 - Put cases that differ only in data in one table-driven or parametrised test, in the form the stack file names.
-- Expected values are literals written by hand. Never compute the expected value with product code.
+- Expected values are literals written by hand. Never compute the expected value with product code, and never check a schema against the file that built it.
+- Test setup imports product definitions (schemas, routes, constants); never copies them.
+- Never assert a known bug as correct behaviour. Record it in `docs/scope.md` as a deferral with a trigger; its failing test is written when it is fixed.
 - Code that parses untrusted input (text, files, network messages) also gets a property or fuzz test with the stack file's named tool. Assert invariants (never crashes, rejects with the typed error, round-trips), never a re-implementation of the logic.
 - Coverage percentage is not a completion criterion. No mutation testing.
 - Keep behaviour in code that tests can drive without the UI, and keep the UI layer thin. A web UI gets one Playwright test per user flow.
-- Each test run gets fresh, isolated resources: its own database, temporary directory, port and identities. Never reuse a dirty baseline.
+- Each test run gets fresh, isolated resources: its own database, temporary directory, port and identities. Never reuse a dirty baseline or a warm stand.
+- Every UI and journey test creates its own user and data through the public API and removes them in its own cleanup; no shared seeded users.
+- A gate passes only on a test command's exit status, never on report files, timestamps or hand-typed counts.
 - Check prerequisites first and fail fast. Label setup failures `SETUP:`; a setup failure is neither a pass nor a product failure.
 - Keep test data small and hand-written; the minimum rows that exercise each rule.
-- Integration tests run against the real database engine. Server engines are started by the tests themselves with Testcontainers for the stack's language; SQLite uses a file in a temporary directory. Start one container per test process; give every test its own database, built by the `migrate` runner. Never an in-memory substitute, a compose file or a CI service container. The same test command runs locally and in CI; Docker is the only prerequisite.
+- Integration tests run against the real database engine. Server engines, and every other service the tests need (for example an auth server), are started by the tests themselves with Testcontainers for the stack's language, on one network per run; SQLite uses a file in a temporary directory. Start one container per test process; give every test its own database, built by the `migrate` runner. Never an in-memory substitute, a compose file or a CI service container. The same test command runs locally and in CI; Docker is the only prerequisite.
 - One test project or package per product unit unless the budget says otherwise.
 
 ## 9. Databases
@@ -137,9 +145,24 @@ One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only,
 - Never blindly retry an operation whose commit outcome is unknown; check first.
 - Check authorisation and target identity before every effect, not once at start-up.
 - Least privilege: separate identities for read, write and administration. No shared admin accounts in application code.
+- Every request that names a resource checks, in the same query, that the caller may access it; answer 404 when not. A missing or commented-out authorisation check is a bug: stop and report it, never keep it as existing behaviour.
+- Never treat an unverified email address as identity.
+- Verify an inbound webhook's signature with its shared secret before parsing it; reject unsigned calls.
+- Error responses carry fixed messages and a request ID, never internal error text.
 - Fail closed: on an unexpected state, stop and report, never guess.
 - Use exact types for money and quantities (section 9); use UTC with explicit offsets for time.
 - No secrets in code, logs, error messages or test data.
+
+### Logging and diagnostics
+
+Diagnose live problems from logs and request IDs, never from a debug mode.
+
+- Log one JSON object per line to stdout: time, level, message, request ID and the event's fields. Never log bodies, headers, query strings, tokens, secrets or personal data, at any level.
+- Every request gets an ID, logged on every line it causes and returned in the `X-Request-ID` response header and in every error response, so a user's report leads to its log lines.
+- Log each unexpected error once, at the boundary that handles it, with its wrapped cause chain. Errors always log, whatever the level.
+- `log_level` is a setting: `info` in production. Raise it to `debug` only while diagnosing, then lower it; debug lines obey the same rules.
+- No debug mode that changes behaviour, adds endpoints or loads tools such as in-browser consoles.
+- To fix a live problem: find its lines by request ID, reproduce it as a failing test (section 8), then fix it.
 
 ## 11. Dependencies
 
@@ -163,6 +186,7 @@ An agent without these skills does the same two passes by hand: a simplification
 
 ## 13. CI
 
+- CI builds from the repository alone: every build input is tracked or pinned. Never replace CI with a local hook.
 - One GitHub Actions workflow, `.github/workflows/ci.yml`, on `ubuntu-latest`, running on pull requests and pushes to the main branch. Check out with `fetch-depth: 0` and run the size gate with `--commits` over the pull request's commits or the pushed range. Steps, fastest first: size gate, `gitleaks`, locked restore, build with warnings as errors, format check, lint, tests (Testcontainers needs no service setup).
 - No scheduled jobs, and no extra workflows until a second deployment target exists.
 - A green CI run is necessary, not sufficient: the end-to-end test must also pass.
@@ -203,3 +227,13 @@ Drawn from one repository that grew to 326k lines without ever running end to en
 - 115 worktrees and 160 branches left in place.
 - A message broker, file journal and self-verification layers for a synchronous one-row-at-a-time write.
 - A CLI entry point that printed "not available" while CI reported green.
+
+From one live production app:
+
+- Any logged-in user could read and change any band's data: a membership check commented out and kept "byte-for-byte" through a data-layer rewrite.
+- Every request body logged, passwords included, with a debug flag left on in production.
+- Deployment over plain FTP to a directory whose scripts root then ran.
+- Database dumps with password hashes, and a passwords document, committed to Git.
+- CI dropped because a build input was untracked, replaced by a pre-push hook that checked report timestamps, not results.
+- 41 gate JSON files with hand-typed counts no script read, and 52 process documents in `tests/`.
+- The schema in four places that had drifted apart, checked by a test against the same file that built it.

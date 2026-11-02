@@ -26,7 +26,7 @@ Adds to `dev_rules.md` for C# on .NET. Current baseline: .NET 10 LTS, C# 14.
 - Use `async`/`await` all the way down when you do I/O; pass `CancellationToken`. Never `.Result`, `.Wait()` or `async void` (except event handlers).
 - Dispose with `using` declarations. Never hold a connection open across user interaction.
 - Parse and format with `CultureInfo.InvariantCulture`; use `decimal` for money. Read the time from `DateTimeOffset.UtcNow`; take a `TimeProvider` only where a test must control the clock.
-- Read configuration from `args` and `Environment.GetEnvironmentVariable` only, in every kind of app. Parse `args` by hand in `Program.cs`; no `System.CommandLine`. No `appsettings*.json` files and no added `Microsoft.Extensions.Configuration` sources.
+- Read settings (`dev_rules.md` section 3) from the `--config` file with `System.Text.Json` into one `sealed record` whose properties are all `required`, with `UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow`, and validate it at start-up. Read secrets with `Environment.GetEnvironmentVariable`. Parse `args` by hand in `Program.cs`; no `System.CommandLine`. No `appsettings*.json` files and no added `Microsoft.Extensions.Configuration` sources.
 - Use `System.Text.Json` with source generation for fixed shapes. Do not add a JSON Schema library to validate a file you can check in 30 lines.
 
 ## Data access

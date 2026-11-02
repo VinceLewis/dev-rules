@@ -19,6 +19,7 @@ Adds to `dev_rules.md` for PostgreSQL 18.
 
 - Use `bigint GENERATED ALWAYS AS IDENTITY` for surrogate keys, not `serial`. Use `uuid DEFAULT uuidv7()` instead only when the key is created outside the database or appears in a URL or API.
 - Use `timestamptz` for instants, `date` for dates, `numeric(19,4)` for money (never `money`, `real` or `double precision`), and `text` with a `CHECK` for length instead of `varchar(n)`.
+- Use `text` with a `CHECK (col IN (...))` for a fixed list of values, never an enum type, whose values cannot be removed. Use `ON DELETE SET NULL` only on nullable columns. Give ordered child rows `UNIQUE (parent_id, position)`, `DEFERRABLE INITIALLY DEFERRED` when reordering swaps positions.
 - Declare `NOT NULL`, primary keys, foreign keys and `CHECK` constraints for every rule the database can enforce. Index every foreign key you join or delete on.
 - Use `jsonb` only for genuinely schemaless data, never to avoid designing columns.
 
@@ -32,7 +33,7 @@ Adds to `dev_rules.md` for PostgreSQL 18.
 
 ## Security
 
-- Applications connect as a role without `SUPERUSER`, `CREATEDB` or ownership of the schema; grant only the privileges they use.
+- Applications connect as a role without `SUPERUSER`, `CREATEDB` or ownership of the schema; grant only the privileges they use, normally `SELECT, INSERT, UPDATE, DELETE`, and set the same with `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>` in the first migration so new tables are covered.
 - Keep `CREATE` on schema `public` revoked from `PUBLIC` (the default since 15) and set `search_path` explicitly in `SECURITY DEFINER` functions.
 - Build dynamic identifiers with `format('%I', name)`, never by concatenation.
 - Require TLS (`sslmode=verify-full`) outside local containers.
