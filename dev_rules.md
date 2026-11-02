@@ -33,8 +33,12 @@ Stack files only add or specialise; when a stack file and this file seem to conf
 
 - Build one vertical slice end to end first: input, core logic, output, and a test that runs the whole path. A layer with no caller is not progress.
 - Reject unsupported inputs, options and modes explicitly, before any side effect. Do not half-support them.
-- Keep the scope in `docs/scope.md`. Write every deferral there as `Deferred: <feature>. Trigger: <event that brings it back>.` No trigger, no deferral: drop it.
-- Before each new slice, add its scope, size estimate and budget increase to `docs/scope.md` and get approval before any code.
+- Keep four kinds of project document, each answering one question and changing at its own speed. Nothing else: no layered specs that "extend" earlier ones, no frozen copies.
+  - `docs/requirements.md`: ranked requirements (what the system must eventually do, and why), with the roadmap as its last section: the ordered slices that close the gap, each with its size estimate. Changes rarely; edited in place.
+  - `docs/scope.md`: the single current truth. It says what the system does now, never plans. Write every deferral in it as `Deferred: <feature>. Trigger: <event that brings it back>.` No trigger, no deferral: drop it. Its budget is 300 lines (section 4), so every session and agent can load it first.
+  - `docs/slice-<n>.md`: a temporary change spec for the one slice in progress. It holds the slice's decisions with their reasons, its contract and file ownership when packets build in parallel (section 14), its scenarios (section 8), its size estimate and budget increase, and a task table.
+- Before each new slice, write `docs/slice-<n>.md` and get approval before any code.
+- When a slice merges, in the same change: fold its behaviour, lasting decisions and new deferrals into `docs/scope.md`, update the roadmap in `docs/requirements.md`, and delete the slice file. The reasons go in the merge commit message. Git is the history.
 
 ## 2. KISS and YAGNI
 
@@ -57,7 +61,7 @@ Stack files only add or specialise; when a stack file and this file seem to conf
 
 ## 4. Size budgets and the ratchet
 
-- Keep `size-budget.json` in the repository root, with limits for: tracked files, total lines, product code lines, test code lines, test data files and lines, docs lines, lines per file (300), line width (120 characters), projects or packages, interfaces, and allowed top-level directories.
+- Keep `size-budget.json` in the repository root, with limits for: tracked files, total lines, product code lines, test code lines, test data files and lines, docs lines, lines in `docs/scope.md` (300), lines per file (300), line width (120 characters), projects or packages, interfaces, and allowed top-level directories.
 - After each milestone, set every budget to actual plus 15%.
 - No source file exceeds 500 lines, so an agent can read and edit the whole file in one pass. The lines-per-file budget is never ratcheted or raised past 500; split the file by responsibility instead. The only exception is a `legacy` entry (next rule), which can only fall. Source files are product code, test code, scripts and CI files; docs, data, test data, generated and lock files are exempt.
 - In an existing repository, list each source file over 500 lines or with lines over the width budget under `legacy` in `size-budget.json`: its path, line count and number of wide lines. Each figure may only fall, with no headroom: the gate fails when a file exceeds its figures or a figure is above the actual value, so it is lowered in the change that earned it. Remove the entry once the file complies. An entry added after the adoption commit is a budget raise. The 15% headroom applies only to the other budgets.
@@ -103,7 +107,7 @@ The gate's test is `scripts/size_gate_test.py`: standard-library `unittest`, run
 
 ### Test-driven cycle
 
-- Before any code, write each slice's scenarios in `docs/scope.md`, one per line: `<behaviour>: <input> → <expected>`. No checkboxes; a scenario is done when its test passes.
+- Before any code, write each slice's scenarios in `docs/slice-<n>.md`, one per line: `<behaviour>: <input> → <expected>`. No checkboxes; a scenario is done when its test passes.
 - Write the slice's end-to-end test (section 1) first. It stays red while the cycles below build the code under it.
 - Take one scenario at a time:
   1. Write its test, or add its row to the existing table.
@@ -203,7 +207,7 @@ An agent without these skills does the same two passes by hand: a simplification
 ## 14. AI agents
 
 - One agent by default. Use at most 4 in parallel, only on disjoint paths, each with an explicitly assigned model and effort.
-- Build in parallel only when all three hold: each agent owns disjoint files in its own worktree; the shared contract (records, entry points, formats) is written and committed before they start; and branches merge one at a time, with the full gate rerun after each merge. Work on shared core code stays serial. Read-only reviews may always run in parallel.
+- Build in parallel only when all three hold: each agent owns disjoint files in its own worktree; the shared contract (records, entry points, formats) and each packet's file ownership are written in `docs/slice-<n>.md` and committed before they start; and branches merge one at a time, with the full gate rerun after each merge. Work on shared core code stays serial. Read-only reviews may always run in parallel.
 - To parallelise shared-core work, first commit a skeleton that fixes the contract and stubs each packet's file, then give each packet one stub to replace, with its own tests.
 - Give each agent a short task: inputs, expected result, forbidden effects, paths it may change. No pasted history.
 - No process apparatus: no ledgers, slot files, pipeline tools, route indexes or handoff directories in the repository.
@@ -213,8 +217,9 @@ An agent without these skills does the same two passes by hand: a simplification
 
 - The requested behaviour works end to end, and the test proving it passes in CI.
 - Existing behaviour still works; the size gate and every CI step pass.
-- No known in-scope critical bug remains; limits and deferrals are written down with triggers.
+- No known in-scope critical bug remains; limits and deferrals are written in `docs/scope.md` with triggers.
 - The commits carry their `Red:` lines and the `Review:` line (sections 8 and 12).
+- The slice file is folded into `docs/scope.md` and `docs/requirements.md` and deleted (section 1).
 - Replaced code, branches and worktrees are deleted.
 
 ## 16. Reporting
@@ -239,6 +244,7 @@ Drawn from one repository that grew to 326k lines without ever running end to en
 - A message broker, file journal and self-verification layers for a synchronous one-row-at-a-time write.
 - A CLI entry point that printed "not available" while CI reported green.
 - In the 4.5k rewrite, line budgets met by cramming: 278 lines over 120 characters, the widest 292, and statements joined on one line, until the size gate also limited line width.
+- In the 4.5k rewrite, specs layered slice on slice, each "binding where the next is silent", so the current truth needed every file and an early one went stale.
 
 From one live production app:
 
