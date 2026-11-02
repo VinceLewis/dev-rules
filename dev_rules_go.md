@@ -12,7 +12,8 @@ Adds to `dev_rules.md` for Go 1.27.
 
 - Format: `gofmt`. CI fails unless `test -z "$(gofmt -l .)"`.
 - Lint: `golangci-lint run` with a v2 `.golangci.yml` enabling `errcheck`, `staticcheck`, `govet`, `ineffassign`, `unused`, `bodyclose`, `sqlclosecheck` and `rowserrcheck`.
-- Test: `go test -race -count=1 ./...`; table-driven tests with literal cases; `t.TempDir()` and `t.Context()` for isolation. Assert with the standard `testing` package only; no `testify` or other assertion library.
+- Test: `go test -race -count=1 ./...`; table-driven tests with literal cases and named `t.Run` subtests; `t.TempDir()` and `t.Context()` for isolation. Assert with the standard `testing` package only; no `testify` or other assertion library. Run one case with `go test -run '^TestName$/^case$' ./<pkg>`.
+- Parsers of untrusted input get a native `FuzzName` test with literal seeds from `f.Add`, which `go test` runs as ordinary cases. After writing or changing one, run `go test -run '^$' -fuzz '^FuzzName$' -fuzztime 30s ./<pkg>`; commit any failing input it writes under `testdata/fuzz/` as a regression case.
 - Database tests start PostgreSQL and SQL Server with `testcontainers-go` (`modules/postgres`, `modules/mssql`): one container per test package, started in `TestMain`, which terminates it after `m.Run()`; each test gets its own database. SQLite tests open a file under `t.TempDir()`. Build the schema with the `migrate` runner.
 - Dependencies: commit `go.sum`; CI runs `go mod tidy -diff` and `go tool govulncheck ./...`.
 

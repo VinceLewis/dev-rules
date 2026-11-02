@@ -39,7 +39,8 @@ Adds to `dev_rules.md` for C# on .NET. Current baseline: .NET 10 LTS, C# 14.
 ## Testing
 
 - Use Testcontainers for .NET (`Testcontainers.MsSql`, `Testcontainers.PostgreSql`) for real database tests, one container per test assembly through an xUnit v3 `AssemblyFixture`; create a fresh database per test and build its schema with the product's migration runner.
-- Use `[Theory]` with `[InlineData]` literals for boundaries; one assertion idea per test.
+- Use `[Theory]` with `[InlineData]` literals for cases that differ only in data; one assertion idea per test. Run one test with `dotnet test --filter-method "*TestName"`.
+- Property tests use `CsCheck` inside an xUnit `[Fact]`: `Gen.<type>.Sample(value => ...)`. No FsCheck.
 - No mocking framework. Hand-write a fake only when the real dependency is unusable in tests.
 
 ## Pitfalls

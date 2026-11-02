@@ -10,6 +10,7 @@ Every rule names one way to do a thing. Never offer or pick an alternative. When
 2. Import them from `CLAUDE.md`, one line each, for example: `@docs/rules/dev_rules.md` and `@docs/rules/dev_rules_dotnet.md`.
 3. Add the size gate (section 5), the pre-commit hook (section 6) and the CI workflow (section 13) in the first commit, before any feature code.
 4. Delete the stack files you do not use. Project-specific rules go in `CLAUDE.md`, never in these files.
+5. In an existing repository, new code follows these rules. Bring existing code into line only when the change's scope includes it, never as a side effect.
 
 ## Index
 
@@ -59,7 +60,7 @@ Stack files only add or specialise; when a stack file and this file seem to conf
 
 ## 5. The size gate
 
-One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only, under about 100 lines, the same file in every repository whatever the stack. Run it with `python3 scripts/size_gate.py` first in CI and in the pre-commit hook. It must:
+One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only, under about 150 lines, the same file in every repository whatever the stack. Run it with `python3 scripts/size_gate.py` first in CI and in the pre-commit hook. It must:
 
 1. List files with `git ls-files --cached --others --exclude-standard`; classify each as product, test code, test data, docs, build or generated (lock files count to total size, not code size).
 2. Print a table of files and lines per class, and fail (exit 1) when any budget is exceeded.
@@ -67,6 +68,8 @@ One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only,
 4. Count interface or abstract declarations in product code and fail above budget.
 5. **Literal scan:** collect every identifier and value of 3 or more characters from test data (headers, cells, keys, names, totals, hashes) and fail if any appears in product code, matched on word boundaries. Keep an explicit allow-list for genuine collisions, each with a reason.
 6. Fail on product string literals that look like connection strings, absolute paths, IP addresses, 64-character hex hashes or secrets.
+7. Fail on skip and focus markers in test code: `t.Skip`, `Skip =`, `Assert.Skip`, `pytest.mark.skip`, `pytest.skip(`, `pytest.mark.xfail`, `.skip(`, `.only(`, `.todo(` and a bats `skip` line.
+8. With `--commits <base>..HEAD`, fail on each commit in the range that changes product code but no test code, unless its subject starts with `Refactor:`. CI passes the range (section 13); the pre-commit hook does not.
 
 ## 6. Git is the history
 
@@ -79,16 +82,41 @@ One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only,
 ## 7. Delete before adding
 
 - Before writing code, look for code to remove or reuse. Remove replaced code in the same change.
+- Make the smallest coherent change. Do not refactor working code outside the change's scope.
 - Delete dead code, unused options, unused dependencies and commented-out code; Git keeps them.
 - Prefer rewriting a small slice over keeping a large one that has never run end to end.
 
 ## 8. Testing
 
-- Test required behaviour, boundaries and realistic failures, weighted by risk. Do not test private implementation details.
+### Test-driven cycle
+
+- Before any code, write each slice's scenarios in `docs/scope.md`, one per line: `<behaviour>: <input> → <expected>`. No checkboxes; a scenario is done when its test passes.
+- Write the slice's end-to-end test (section 1) first. It stays red while the cycles below build the code under it.
+- Take one scenario at a time:
+  1. Write its test, or add its row to the existing table.
+  2. Run only that test and see it fail on the assertion, for the expected reason. If it does not compile, add a stub that compiles and run it again.
+  3. Write only the code that test needs. Never implement a later scenario early.
+  4. Run the whole suite and see it pass.
+  5. Refactor while the suite stays green.
+- Keep a new test that passes on its first run only if it covers a distinct input class or boundary, and say `No red: <test>, already covered by <code>` in the commit. Otherwise delete it.
+- Quote each red in the commit message: `Red: <test>: <failure line>`. No TDD log files.
+- A bug fix starts with a test that reproduces the bug and fails.
+- Never change an expected value, delete a test or skip one to get green without a one-line reason in the commit message. Never commit a skip or focus marker (section 5).
+
+### Choosing and writing tests
+
+- Test required behaviour, weighted by risk, never private implementation details. Choose cases with these prompts:
+  - valid and invalid input classes, including empty input where the interface allows it;
+  - values at and either side of each boundary;
+  - each combination of conditions with a distinct outcome;
+  - each state change, including recovery after an error.
+- Put cases that differ only in data in one table-driven or parametrised test, in the form the stack file names.
 - Expected values are literals written by hand. Never compute the expected value with product code.
+- Code that parses untrusted input (text, files, network messages) also gets a property or fuzz test with the stack file's named tool. Assert invariants (never crashes, rejects with the typed error, round-trips), never a re-implementation of the logic.
+- Coverage percentage is not a completion criterion. No mutation testing.
+- Keep behaviour in code that tests can drive without the UI, and keep the UI layer thin. A web UI gets one Playwright test per user flow.
 - Each test run gets fresh, isolated resources: its own database, temporary directory, port and identities. Never reuse a dirty baseline.
 - Check prerequisites first and fail fast. Label setup failures `SETUP:`; a setup failure is neither a pass nor a product failure.
-- When a test fails, keep the failing case and rerun it unchanged after the fix. If the expectation was wrong, say so in the commit.
 - Keep test data small and hand-written; the minimum rows that exercise each rule.
 - Integration tests run against the real database engine. Server engines are started by the tests themselves with Testcontainers for the stack's language; SQLite uses a file in a temporary directory. Start one container per test process; give every test its own database, built by the `migrate` runner. Never an in-memory substitute, a compose file or a CI service container. The same test command runs locally and in CI; Docker is the only prerequisite.
 - One test project or package per product unit unless the budget says otherwise.
@@ -123,13 +151,19 @@ One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only,
 
 ## 12. Review
 
-- Before merging, run `/simplify`, then `/code-review medium`.
-- Use one independent review, with fresh context, for authority, transaction, security or data-format changes. Never two reviewers re-implementing the same thing.
-- Reviewers report demonstrated bugs, requirement gaps and material risks with evidence and a fix. Style is the formatter's job.
+The agent that made the change runs the review before it pushes, once the change is complete and its tests pass.
+
+1. Run `/simplify`, then rerun the whole suite. Revert any simplification that changes behaviour or breaks these rules; these rules win over the skill.
+2. Run `/code-review medium` with no target, which reviews the unpushed commits and uncommitted changes. Use `/code-review high` when the change touches authorisation, transactions, security or a data format. Never `--fix`, and no second reviewer.
+3. For each confirmed bug, write a failing test, then fix it (section 8). Report findings outside the change's scope; do not fix them.
+4. One pass of each. Rerun `/code-review` only after fixing authorisation or security code.
+5. Record the result in the last commit message or the pull request: `Review: <level>, <n> found, <n> fixed (<tests>)`.
+
+An agent without these skills does the same two passes by hand: a simplification pass, then a bug review of the diff. Reviews report demonstrated bugs, requirement gaps and material risks with evidence; style is the formatter's job.
 
 ## 13. CI
 
-- One GitHub Actions workflow, `.github/workflows/ci.yml`, on `ubuntu-latest`, running on pull requests and pushes to the main branch. Steps, fastest first: size gate, `gitleaks`, locked restore, build with warnings as errors, format check, lint, tests (Testcontainers needs no service setup).
+- One GitHub Actions workflow, `.github/workflows/ci.yml`, on `ubuntu-latest`, running on pull requests and pushes to the main branch. Check out with `fetch-depth: 0` and run the size gate with `--commits` over the pull request's commits or the pushed range. Steps, fastest first: size gate, `gitleaks`, locked restore, build with warnings as errors, format check, lint, tests (Testcontainers needs no service setup).
 - No scheduled jobs, and no extra workflows until a second deployment target exists.
 - A green CI run is necessary, not sufficient: the end-to-end test must also pass.
 
@@ -145,7 +179,15 @@ One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only,
 - The requested behaviour works end to end, and the test proving it passes in CI.
 - Existing behaviour still works; the size gate and every CI step pass.
 - No known in-scope critical bug remains; limits and deferrals are written down with triggers.
+- The commits carry their `Red:` lines and the `Review:` line (sections 8 and 12).
 - Replaced code, branches and worktrees are deleted.
+
+## 16. Reporting
+
+- Write reports, commit messages and agent-to-agent messages in plain British English. Speak as the person doing the work: "I found a bug: the total ignores refunds", not "the owner identified a reconciliation gap".
+- Prefer ordinary words: bug, test, fix, change, finished. Describe the observed problem, its effect, the fix and the test result.
+- Keep progress updates short, as Done / Found / Next; omit empty parts. Raise only real blockers and decisions.
+- Never claim success without evidence. Say which tests ran, and which did not and why.
 
 ## Anti-patterns seen
 
