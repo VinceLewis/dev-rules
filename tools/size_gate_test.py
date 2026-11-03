@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Tests for the size gate and the pre-commit hook (dev_rules.md section 5): each check fails on its seeded breach in
 a temporary Git repository, and a clean repository passes. This file holds the shared repository case and the budget
-and per-file tests; size_gate_scan_test.py the scans, commits, ratchet and hook. Running this file runs both.
+and per-file tests; size_gate_scan_test.py the scans; size_gate_history_test.py the commits, ratchet and hook.
+Running this file runs all three.
 Canonical as dev-rules tools/size_gate_test.py, copied unchanged to scripts/size_gate_test.py.
 """
 
@@ -76,9 +77,9 @@ class RepositoryCase(unittest.TestCase):
         self.write(FILES)
         self.budget()
 
-    def git(self, *args: str) -> str:
+    def git(self, *args: str, stdin: str = "") -> str:
         return subprocess.run(  # noqa: S603 - fixed argv to git, no shell
-            [GIT, *args], cwd=self.root, env=GIT_ENV, check=True, capture_output=True, text=True
+            [GIT, *args], cwd=self.root, env=GIT_ENV, check=True, capture_output=True, text=True, input=stdin
         ).stdout
 
     def write(self, files: dict[str, str]) -> None:
@@ -100,11 +101,12 @@ class RepositoryCase(unittest.TestCase):
             [sys.executable, str(GATE), *args], cwd=cwd or self.root, env=GIT_ENV, capture_output=True, text=True
         )
 
-    def assert_gate(self, code: int, *args: str, says: str = "") -> None:
+    def assert_gate(self, code: int, *args: str, says: str | tuple[str, ...] = "") -> None:
         result = self.run_gate(*args)
         output = result.stdout + result.stderr
         self.assertEqual(code, result.returncode, output)
-        self.assertIn(says, output)
+        for text in [says] if isinstance(says, str) else says:
+            self.assertIn(text, output)
 
 
 class GateTest(RepositoryCase):
@@ -156,6 +158,23 @@ class GateTest(RepositoryCase):
                 self.budget(**{"max_interfaces": 1, key: 0})
                 self.assert_gate(1, says=f"FAIL {key}: ")
 
+    def test_interface_declarations_are_counted_but_comments_are_not(self) -> None:
+        declarations = [
+            "// The interface below is one of seven; an abstract class in prose does not count.",
+            "public interface IShape { }",
+            "public abstract partial class Base { }",
+            "public abstract record Event;",
+            "export interface Point { x: number }",
+            "export abstract class Node {}",
+            "type Reader interface { Read() }",
+            "class Shape(Protocol):",
+        ]
+        self.write({"src/shapes.txt": "\n".join(declarations) + "\n"})
+        self.budget(max_interfaces=7)
+        self.assert_gate(0)
+        self.budget(max_interfaces=6)
+        self.assert_gate(1, says="FAIL max_interfaces: 7 > 6")
+
     def test_slice_specs_are_outside_the_docs_budget(self) -> None:
         self.budget(max_docs_lines=2)
         self.write({"docs/slice-9.md": "spec line\n" * 40})
@@ -181,6 +200,11 @@ class GateTest(RepositoryCase):
             "docs/evidence/run.md",
             "docs/handoffs/next.md",
             "docs/ledger/state.md",
+            "docs/handoff/next.md",
+            "docs/ledgers/state.md",
+            "docs/Handoffs/next.md",
+            "src/APP.BAK",
+            "docs/Spec.PDF",
             "src/tool.exe",
             "src/lib.dll",
             "src/lib.so",
@@ -197,6 +221,29 @@ class GateTest(RepositoryCase):
                 self.assert_gate(1, says=f"FAIL {path}: forbidden")
                 (self.root / path).unlink()
 
+    def test_listed_paths_that_are_not_regular_files_fail(self) -> None:
+        head = self.commit("Add the app", {"src/old.bak": "x\n"})
+        (self.root / "src/old.bak").unlink()
+        (self.root / "docs/link.md").symlink_to("../README.md")
+        self.git("update-index", "--add", "--cacheinfo", f"160000,{head},src/vendor")
+        (self.root / "src/vendor").mkdir()
+        says = (
+            "src/old.bak: listed by git but missing from the working tree",
+            "src/old.bak: forbidden file name",
+            "docs/link.md: listed by git but a symlink",
+            "src/vendor: listed by git but a directory or submodule",
+        )
+        self.assert_gate(1, says=says)
+
+    def test_unreadable_file_is_setup(self) -> None:
+        self.write({"src/locked.py": "X = 1\n"})
+        (self.root / "src/locked.py").chmod(0)
+        self.assert_gate(2, says="SETUP: cannot read src/locked.py")
+
+    def test_file_name_that_is_not_utf8_is_reported(self) -> None:
+        self.write({os.fsdecode(b"src/caf\xe9.py"): "#" * 121 + "\n"})
+        self.assert_gate(1, says="src/caf\\udce9.py:1: wider than max_line_width 120")
+
     def test_source_file_over_max_file_lines_fails(self) -> None:
         self.budget(max_product_code_lines=1000, max_total_lines=1000)
         self.write({"src/big.py": "x = 1\n" * 300})
@@ -210,6 +257,8 @@ class GateTest(RepositoryCase):
                 "src/wide.py": "x = 1  #" + "-" * 112 + "\n",
                 "README.md": "# Demo " + "-" * 200 + "\n",
                 "scripts/settings.json": '{"key": "' + "v" * 200 + '"}\n',
+                "src/Build.props": "<Project>" + "-" * 200 + "</Project>\n",
+                "src/NuGet.config": "<configuration>" + "-" * 200 + "</configuration>\n",
             }
         )
         self.assert_gate(0)
@@ -235,6 +284,6 @@ class GateTest(RepositoryCase):
 
 
 if __name__ == "__main__":
-    # Discovery imports this file and size_gate_scan_test.py as modules, so each test runs once.
+    # Discovery imports the three size_gate*test.py files as modules, so each test runs once.
     pattern = "size_gate*test.py"
     unittest.main(module=None, argv=[sys.argv[0], "discover", "--start-directory", str(HERE), "--pattern", pattern])

@@ -2,11 +2,13 @@
 Canonical as dev-rules tools/size_gate_checks.py, copied unchanged to scripts/size_gate_checks.py.
 """
 
+import codecs
 import contextlib
 import csv
 import dataclasses
 import fnmatch
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -32,7 +34,7 @@ FORBIDDEN_NAMES = (  # copies, generated indexes, binaries, office documents, du
     "*.backup",
     "*backup*.sql",
 )
-FORBIDDEN_DIRS = {"evidence", "handoff", "handoffs", "ledger", "ledgers"}
+FORBIDDEN_DIRS = {"evidence", "handoff", "handoffs", "ledger", "ledgers"}  # names and globs are matched in lower case
 SUSPECT = {  # product string literals that hold data or secrets
     "connection string": re.compile(r"""(?i)["'][^"'\n]*\b(?:server|data source|host|user id|password)\s*=[^"'\n]*;"""),
     "connection URL": re.compile(r"""(?i)["'](?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|sqlserver)://"""),
@@ -49,6 +51,9 @@ SKIP_MARKER = re.compile(
 BATS_SKIP = re.compile(r"\s*skip\b")
 QUOTED = re.compile(r"""'([^'\n]*)'|"([^"\n]*)\"""")
 NUMBER = re.compile(r"(?<![\w.])\d+(?:\.\d+)?(?![\w.])")
+NUMERIC = re.compile(r"\d+(?:\.\d+)?")
+NUMBER_END = r"(?![\d.])[mMdDfFlLuU]?(?!\w)"  # 10.50 also matches 10.50m, 77 matches 77L, never 10.505
+TEST_CHANGES = (b"A", b"M", b"T")  # deleting a test is not a test change
 
 
 class SetupError(Exception):
@@ -65,29 +70,64 @@ class Entry:
     wide: list[int]  # numbers of the source lines wider than max_line_width
 
 
-def git(root: pathlib.Path, *args: str) -> str:
+def git(root: pathlib.Path, *args: str) -> bytes:
+    """Raw output: file names need not be UTF-8, so callers decode paths with os.fsdecode."""
     executable = shutil.which("git")
     if executable is None:
         raise SetupError("git is not installed")
     try:
         completed = subprocess.run(  # noqa: S603 - fixed argv to git, no shell
-            [executable, *args], cwd=root, check=True, capture_output=True, text=True
+            [executable, *args], cwd=root, check=True, capture_output=True
         )
         return completed.stdout
     except subprocess.CalledProcessError as err:
-        raise SetupError(f"git {' '.join(args)}: {err.stderr.strip()}") from err
+        raise SetupError(f"git {' '.join(args)}: {err.stderr.decode('utf-8', 'replace').strip()}") from err
 
 
 def classify(path: str, classes: dict) -> str | None:
     return next((cls for cls in CLASSES if any(fnmatch.fnmatchcase(path, glob) for glob in classes[cls])), None)
 
 
-def list_entries(root: pathlib.Path, budget: dict) -> list[Entry]:
-    listed = git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard").split("\0")
+def list_paths(root: pathlib.Path) -> list[str]:
+    listed = git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard").split(b"\0")
+    return sorted({os.fsdecode(path) for path in listed if path})
+
+
+def is_regular(root: pathlib.Path, path: str) -> bool:
+    return not (root / path).is_symlink() and (root / path).is_file()
+
+
+def check_paths(root: pathlib.Path, paths: list[str], budget: dict) -> list[str]:
+    """Every path git lists, whatever its state on disk: the gate reads the working tree."""
+    errors = []
+    for path in paths:
+        directories = path.split("/")[:-1]
+        if (root / path).is_symlink():
+            errors.append(f"{path}: listed by git but a symlink; only regular files are allowed")
+        elif (root / path).is_dir():
+            errors.append(f"{path}: listed by git but a directory or submodule; only regular files are allowed")
+        elif not (root / path).is_file():
+            errors.append(f"{path}: listed by git but missing from the working tree")
+        if classify(path, budget["classes"]) is None:
+            errors.append(f"{path}: matches no class in size-budget.json")
+        if directories and directories[0] not in budget["allowed_top_level"]:
+            errors.append(f"{path}: top-level directory {directories[0]!r} is not in allowed_top_level")
+        if any(fnmatch.fnmatchcase(pathlib.PurePath(path).name.lower(), glob) for glob in FORBIDDEN_NAMES):
+            errors.append(f"{path}: forbidden file name (copy, backup, binary, office document or dump)")
+        if FORBIDDEN_DIRS & {directory.lower() for directory in directories}:
+            errors.append(f"{path}: forbidden directory (evidence, handoff or ledger)")
+    return errors
+
+
+def list_entries(root: pathlib.Path, paths: list[str], budget: dict) -> list[Entry]:
     entries = []
-    for path in sorted({path for path in listed if path and (root / path).is_file()}):
+    for path in [path for path in paths if is_regular(root, path)]:
         cls = classify(path, budget["classes"])
-        lines = [line.decode("utf-8", "replace") for line in (root / path).read_bytes().splitlines()]
+        try:
+            data = (root / path).read_bytes().removeprefix(codecs.BOM_UTF8)
+        except OSError as err:
+            raise SetupError(f"cannot read {path}: {err.strerror}") from err
+        lines = [line.decode("utf-8", "replace") for line in data.splitlines()]
         is_source = cls in SOURCE_CLASSES and pathlib.PurePath(path).suffix not in DATA_SUFFIXES
         width = budget["max_line_width"]
         wide = [number for number, line in enumerate(lines, 1) if is_source and len(line) > width]
@@ -101,15 +141,6 @@ def check_files(entries: list[Entry], budget: dict) -> list[str]:
     legacy = budget["legacy"]
     for entry in entries:
         path, count, wide = entry.path, len(entry.lines), entry.wide
-        directories = path.split("/")[:-1]
-        if entry.cls is None:
-            errors.append(f"{path}: matches no class in size-budget.json")
-        if directories and directories[0] not in budget["allowed_top_level"]:
-            errors.append(f"{path}: top-level directory {directories[0]!r} is not in allowed_top_level")
-        if any(fnmatch.fnmatchcase(pathlib.PurePath(path).name, glob) for glob in FORBIDDEN_NAMES):
-            errors.append(f"{path}: forbidden file name (copy, backup, binary, office document or dump)")
-        if FORBIDDEN_DIRS & set(directories):
-            errors.append(f"{path}: forbidden directory (evidence, handoff or ledger)")
         if entry.cls == "product":
             errors += [f"{path}: suspect {name} literal" for name, regex in SUSPECT.items() if regex.search(entry.text)]
         if entry.cls == "test_code":
@@ -134,7 +165,7 @@ def check_files(entries: list[Entry], budget: dict) -> list[str]:
 
 def check_literal_scan(entries: list[Entry], budget: dict) -> list[str]:
     """Fail on any key or value of 3 or more characters from test data that appears in product code: JSON keys and
-    values, CSV cells, and quoted strings and numbers in other text files. A dotted value also gives its parts."""
+    values, CSV and TSV cells, and quoted strings and numbers in other text files. A dotted value gives its parts."""
     values: set[str] = set()
 
     def walk(node: object) -> None:
@@ -155,7 +186,9 @@ def check_literal_scan(entries: list[Entry], budget: dict) -> list[str]:
                 walk(json.loads(entry.text))
                 continue
         if suffix in (".csv", ".tsv"):
-            for row in csv.reader(entry.lines, delimiter="\t" if suffix == ".tsv" else ","):
+            header = entry.lines[0] if entry.lines else ""
+            delimiter = max(",;\t", key=header.count)  # the delimiter the header uses most; a comma on a tie
+            for row in csv.reader(entry.lines, delimiter=delimiter):
                 values.update(row)
             continue
         values.update(first or second for first, second in QUOTED.findall(entry.text))
@@ -165,7 +198,8 @@ def check_literal_scan(entries: list[Entry], budget: dict) -> list[str]:
     product = [entry for entry in entries if entry.cls == "product"]
     errors = []
     for value in sorted(part for part in parts - allowed if len(part) >= 3):
-        pattern = re.compile(r"(?<![\w.])" + re.escape(value) + r"(?!\w)")
+        ending = NUMBER_END if NUMERIC.fullmatch(value) else r"(?!\w)"
+        pattern = re.compile(r"(?<![\w.])" + re.escape(value) + ending)
         found = [entry.path for entry in product if pattern.search(entry.text)]
         if found:
             errors.append(f"hard-coded test-data value {value!r} in {', '.join(found)}")
@@ -173,14 +207,26 @@ def check_literal_scan(entries: list[Entry], budget: dict) -> list[str]:
 
 
 def check_commits(root: pathlib.Path, commits: str, classes: dict) -> list[str]:
-    """Test with code: each non-merge commit that changes product code changes test code too, or says Refactor:."""
-    if ".." not in commits:
+    """Test with code: each non-merge commit that changes product code adds or modifies test code, or says Refactor:.
+    The range is exactly A..B; --root keeps a root commit that B brings in from an unrelated history."""
+    sides = commits.split("..")
+    if len(sides) != 2:
         raise SetupError(f"--commits needs a range A..B, not {commits!r}")
+    for side in sides:  # an empty side, or the third dot of A...B, is not a commit
+        try:
+            git(root, "rev-parse", "--verify", "--quiet", f"{side}^{{commit}}")
+        except SetupError as err:
+            raise SetupError(f"--commits: {side!r} is not a commit") from err
     errors = []
-    for sha in git(root, "rev-list", "--no-merges", commits).split():
-        subject = git(root, "log", "-1", "--format=%s", sha).strip()
-        paths = git(root, "diff-tree", "-z", "--root", "--no-commit-id", "--name-only", "-r", sha).split("\0")
-        changed = {classify(path, classes) for path in paths if path}
-        if "product" in changed and "test_code" not in changed and not subject.startswith("Refactor:"):
-            errors.append(f"commit {sha[:12]} {subject!r}: changes product code but no test code")
+    for sha in git(root, "rev-list", "--no-merges", commits).decode("ascii").split():
+        subject = git(root, "log", "-1", "--format=%s", sha).decode("utf-8", "replace").strip()
+        fields = git(root, "diff-tree", "-z", "-r", "--root", "--no-commit-id", "--name-status", sha).split(b"\0")[:-1]
+        changes = [
+            (status, classify(os.fsdecode(path), classes))
+            for status, path in zip(fields[::2], fields[1::2], strict=True)
+        ]
+        product = any(cls == "product" for _, cls in changes)
+        tested = any(cls == "test_code" and status in TEST_CHANGES for status, cls in changes)
+        if product and not tested and not subject.startswith("Refactor:"):
+            errors.append(f"commit {sha[:12]} {subject!r}: changes product code but adds or modifies no test code")
     return errors

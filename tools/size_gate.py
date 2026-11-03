@@ -8,6 +8,7 @@ import argparse
 import datetime
 import fnmatch
 import json
+import os
 import pathlib
 import re
 import sys
@@ -19,8 +20,10 @@ from size_gate_checks import (
     check_commits,
     check_files,
     check_literal_scan,
+    check_paths,
     git,
     list_entries,
+    list_paths,
 )
 
 COUNT_BUDGETS = (
@@ -40,9 +43,12 @@ FILE_LINES_LIMIT = 500
 HEADROOM_PERCENT = 15
 SLICE_SPEC = re.compile(r"docs/slice-\d+\.md")
 PROJECT_FILES = ("*.csproj", "*.fsproj", "go.mod", "package.json", "pyproject.toml")
-INTERFACE = re.compile(
-    r"\binterface\s+\w+|\btype\s+\w+\s+interface\b|\babstract\s+class\b"  # C#, TypeScript, Go
-    r"|\bclass\s+\w+\s*\([^)]*\b(?:ABC|ABCMeta|Protocol)\b"  # Python
+MODIFIERS = r"^[ \t]*(?:(?:public|internal|private|protected|export|default|declare|sealed|partial|abstract)[ \t]+)*"
+INTERFACE = re.compile(  # declarations at the start of a line, so comments that say "interface" do not count
+    MODIFIERS + r"(?:interface[ \t]+\w+|abstract[ \t]+(?:partial[ \t]+)?(?:class|record)\b)"  # C#, TypeScript
+    r"|^[ \t]*type[ \t]+\w+[ \t]+interface\b"  # Go
+    r"|^[ \t]*class[ \t]+\w+[ \t]*\([^)]*\b(?:ABC|ABCMeta|Protocol)\b",  # Python
+    re.MULTILINE,
 )
 
 
@@ -107,8 +113,21 @@ def measure(entries: list[Entry]) -> dict:
     }
 
 
-def ratchet(root: pathlib.Path, budget: dict, entries: list[Entry], actual: dict) -> None:
-    """Every count budget to actual plus 15%, every legacy figure to actual, and a dated reason line."""
+def ratchet(root: pathlib.Path, budget: dict, entries: list[Entry], actual: dict) -> int:
+    """Every count budget to actual plus 15%, every legacy figure down to actual, and a dated reason line.
+    A legacy figure may only fall: if a file grew past its entry, nothing is written and the exit is 1."""
+    sources = {entry.path: entry for entry in entries if entry.is_source}
+    refused = []
+    for path, figures in budget["legacy"].items():
+        entry = sources.get(path)
+        if entry and (len(entry.lines) > figures["lines"] or len(entry.wide) > figures["wide_lines"]):
+            refused.append(
+                f"refused legacy raise {path}: {len(entry.lines)} lines, {len(entry.wide)} wide; "
+                f"recorded {figures['lines']}, {figures['wide_lines']}"
+            )
+    if refused:
+        print("\n".join(refused))
+        return 1
     changes = []
     for key in COUNT_BUDGETS:
         new = actual[key] + actual[key] * HEADROOM_PERCENT // 100
@@ -116,7 +135,6 @@ def ratchet(root: pathlib.Path, budget: dict, entries: list[Entry], actual: dict
             changes.append(f"{'raised' if new > budget[key] else 'lowered'} {key} {budget[key]} -> {new}")
         budget[key] = new
     cap = budget["max_file_lines"]
-    sources = {entry.path: entry for entry in entries if entry.is_source}
     for path, figures in list(budget["legacy"].items()):
         entry = sources.get(path)
         if entry is None or len(entry.lines) <= cap and not entry.wide:
@@ -129,7 +147,8 @@ def ratchet(root: pathlib.Path, budget: dict, entries: list[Entry], actual: dict
         print(change)
     today = datetime.date.today().isoformat()
     budget["reasons"].append(f"{today} --ratchet to actual + {HEADROOM_PERCENT}%: {'; '.join(changes) or 'no change'}")
-    (root / "size-budget.json").write_text(json.dumps(budget, indent=2) + "\n", encoding="utf-8")
+    (root / "size-budget.json").write_text(json.dumps(budget, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return 0
 
 
 def report(entries: list[Entry], actual: dict, budget: dict, errors: list[str]) -> None:
@@ -150,15 +169,17 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--commits", metavar="A..B", help="also check each non-merge commit in the range")
     mode.add_argument("--ratchet", action="store_true", help="rewrite size-budget.json to actual and exit 0")
     args = parser.parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(errors="backslashreplace")  # file names need not be UTF-8
     try:
-        root = pathlib.Path(git(pathlib.Path.cwd(), "rev-parse", "--show-toplevel").strip())
+        root = pathlib.Path(os.fsdecode(git(pathlib.Path.cwd(), "rev-parse", "--show-toplevel")).rstrip("\n"))
         budget = load_budget(root / "size-budget.json")
-        entries = list_entries(root, budget)
+        paths = list_paths(root)
+        entries = list_entries(root, paths, budget)
         actual = measure(entries)
         if args.ratchet:
-            ratchet(root, budget, entries, actual)
-            return 0
-        errors = check_files(entries, budget) + check_literal_scan(entries, budget)
+            return ratchet(root, budget, entries, actual)
+        errors = check_paths(root, paths, budget) + check_files(entries, budget) + check_literal_scan(entries, budget)
         errors += [
             f"{key}: {actual[key]} > {budget[key]}"
             for key in (*COUNT_BUDGETS, "max_scope_lines")
