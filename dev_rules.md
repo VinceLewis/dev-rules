@@ -72,29 +72,42 @@ Stack files only add or specialise; when a stack file and this file seem to conf
 
 ## 5. The size gate
 
-One script, `scripts/size_gate.py`: Python 3.12 or later, standard library only, under about 200 lines, the same file in every repository whatever the stack. Run it with `python3 scripts/size_gate.py` first in CI and in the pre-commit hook. It must:
+The gate, its tests and the pre-commit hook are canonical in the dev-rules repository's `tools/`: `size_gate.py` (the command line, the budget file, the measures and the ratchet), `size_gate_checks.py` (the checks), `size_gate_test.py`, `size_gate_scan_test.py` and `pre-commit`. Copy the four Python files unchanged to `scripts/` and `pre-commit` to `.githooks/pre-commit`, and name the dev-rules commit in the copy's commit message. Never edit a copy: change the canonical file, then copy it again. CI builds from the project alone and never fetches them. Classify the copies as `build`, and ignore `__pycache__/` (section 6), because the gate imports `size_gate_checks.py`.
 
-1. List files with `git ls-files --cached --others --exclude-standard`; classify each as product, test code, test data, docs, build or generated (lock files count to total size, not code size).
+The gate is Python 3.10 or later and standard library only, the same files in every repository whatever the stack. Each file has at most 300 lines and is formatted with `dev_rules_python.md`'s `ruff format` at a line length of 120. Run it with `python3 scripts/size_gate.py` first in CI and in the pre-commit hook. It exits 0 on pass, 1 on fail and 2 on `SETUP:` (not a Git repository, or `size-budget.json` missing or invalid).
+
+`size-budget.json` follows `tools/size-budget.example.json`. Every key is required and unknown keys are `SETUP:`.
+
+- `classes`: globs for each of `generated`, `build`, `product`, `test_code`, `test_data` and `docs`. The first class in that order that matches wins, `*` matches across `/`, and a file that no class matches fails.
+- One cap per section 4 budget: `max_tracked_files`, `max_total_lines`, `max_product_code_lines`, `max_test_code_lines`, `max_test_data_files`, `max_test_data_lines`, `max_docs_lines`, `max_scope_lines`, `max_file_lines`, `max_line_width`, `max_projects` and `max_interfaces`.
+- `allowed_top_level`: the allowed top-level directories.
+- `literal_scan_allow`: groups of `{"reason": …, "values": […]}`.
+- `legacy`: each path mapped to `{"lines": …, "wide_lines": …}`.
+- `reasons`: dated lines.
+
+It must:
+
+1. List files with `git ls-files --cached --others --exclude-standard`; classify each by `classes` as product, test code, test data, docs, build or generated (lock files count to total size, not code size).
 2. Print a table of files and lines per class, and fail (exit 1) when any budget is exceeded.
-3. Fail on forbidden paths: versioned copies (`*-v[0-9]*.*`, `*_old.*`, `*.bak`, `*.orig`, `*.py.txt`-style frozen copies), evidence, handoff and ledger directories, generated indexes, and files gitleaks cannot inspect: binaries (`*.exe`, `*.dll`, `*.so`), office documents (`*.docx`, `*.xlsx`, `*.pdf`), database dumps and backups (`*.dump`, `*.backup`, `*.bak`, `*backup*.sql`).
+3. Fail on forbidden paths: versioned copies (`*-v[0-9]*.*`, `*_old.*`, `*.bak`, `*.orig`, `*.py.txt`-style frozen copies matched as `*.*.txt`), evidence, handoff and ledger directories (`evidence/`, `handoff(s)/`, `ledger(s)/` at any depth), generated indexes (`*llm-routes*.json`), and files gitleaks cannot inspect: binaries (`*.exe`, `*.dll`, `*.so`), office documents (`*.docx`, `*.xlsx`, `*.pdf`), database dumps and backups (`*.dump`, `*.backup`, `*.bak`, `*backup*.sql`).
 4. Count interface or abstract declarations in product code and fail above budget.
-5. **Literal scan:** collect every identifier and value of 3 or more characters from test data (headers, cells, keys, names, totals, hashes) and fail if any appears in product code, matched on word boundaries. Keep an explicit allow-list for genuine collisions, each with a reason.
+5. **Literal scan:** collect every identifier and value of 3 or more characters from test data (headers, cells, keys, names, totals, hashes) and fail if any appears in product code, matched on word boundaries. It reads JSON keys and values, CSV cells, and quoted strings and numbers in other test-data files. A dotted value also gives its parts. Keep an explicit allow-list for genuine collisions, `literal_scan_allow` groups each with a reason.
 6. Fail on product string literals that look like connection strings, absolute paths, IP addresses, 64-character hex hashes or secrets.
 7. Fail on skip and focus markers in test code: `t.Skip`, `Skip =`, `Assert.Skip`, `pytest.mark.skip`, `pytest.skip(`, `pytest.mark.xfail`, `.skip(`, `.only(`, `.todo(` and a bats `skip` line.
-8. With `--commits <base>..HEAD`, fail on each commit in the range that changes product code but no test code, unless its subject starts with `Refactor:`. CI passes the range (section 13); the pre-commit hook does not.
-9. Fail on any line of code or CI file wider than the line-width budget, so line budgets cannot be met by widening lines. JSON and XML data files, Markdown prose and test data are exempt. A `legacy` file fails when its wide lines exceed its recorded number.
-10. Fail on any source file over 500 lines (section 4), whatever the other budgets say. A `legacy` file fails when it exceeds its recorded line count.
+8. With `--commits <base>..HEAD`, fail on each non-merge commit in the range that changes product code but no test code, unless its subject starts with `Refactor:`. CI passes the range (section 13); the pre-commit hook does not.
+9. Fail on any line of a source file (product, test code or build: code, scripts and CI files) wider than `max_line_width`, so line budgets cannot be met by widening lines. JSON and XML data files (including XML project and config files such as `*.csproj`, `*.props`, `*.slnx` and `*.config`), Markdown prose, docs, test data and generated files are exempt. A `legacy` file fails when its wide lines differ from its recorded number.
+10. Fail on any source file over `max_file_lines`. That cap is never above 500 (section 4); a budget that sets it higher is `SETUP:`. A `legacy` file fails when its line count differs from its recorded number.
 11. Fail on any `legacy` figure above the file's actual value, and on an entry for a file that complies or no longer exists.
-12. With `--ratchet`, write `size-budget.json` per section 4 (budgets to actual plus 15%, `legacy` figures to actual, a dated reason line) instead of checking, and exit 0.
+12. With `--ratchet`, write `size-budget.json` per section 4 instead of checking, print every cap it raised or lowered, and exit 0. It sets every count budget to actual plus 15%, rounded down. `max_scope_lines`, `max_file_lines` and `max_line_width` are fixed rule values and are never ratcheted. It sets `legacy` figures to actual, drops entries for files that comply or no longer exist, and appends a dated reason line that lists the changes. A project that needs approval for raises records that as its own deviation; the tool stays the same.
 
-The gate's test is `scripts/size_gate_test.py`: standard-library `unittest`, run with `python3 scripts/size_gate_test.py`, the same file in every repository. For each check above it builds a temporary Git repository with one seeded breach and asserts exit 1; a clean repository exits 0. A check that has never been seen to fail proves nothing.
+The gate's tests are `scripts/size_gate_test.py` (budgets and files) and `scripts/size_gate_scan_test.py` (scans, commits, the ratchet and the hook): standard-library `unittest`, run together with `python3 scripts/size_gate_test.py`, the same files in every repository. For each check above it builds a temporary Git repository with one seeded breach and asserts exit 1; a clean repository exits 0, and a missing or invalid budget exits 2. It also runs the pre-commit hook against a stand-in `gitleaks`. A check that has never been seen to fail proves nothing.
 
 ## 6. Git is the history
 
 - Edit files in place. Never commit `-v2` copies, frozen copies, recorded evidence, run logs, handoffs, ledgers, status trackers or generated test vectors.
 - Record results in the commit message or pull request, not in the tree.
 - Use short-lived branches; delete each branch and worktree when it merges.
-- Never commit secrets. The pre-commit hook is `.githooks/pre-commit`, a Bash script that runs the size gate and `gitleaks git --pre-commit --staged`; enable it once per clone with `git config core.hooksPath .githooks`. CI runs `gitleaks` too.
+- Never commit secrets. The pre-commit hook is `.githooks/pre-commit`, a copy of `tools/pre-commit` (section 5): a Bash script that runs the size gate and `gitleaks git --pre-commit --staged`, and stops with `SETUP:` when `python3` or `gitleaks` is missing. Enable it once per clone with `git config core.hooksPath .githooks`. The gate does not run gitleaks; the hook and CI do.
 - `.gitignore` covers build output, caches, logs, local data and real inputs from the first commit.
 
 ## 7. Delete before adding

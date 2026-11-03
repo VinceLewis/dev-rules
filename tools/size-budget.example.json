@@ -1,0 +1,83 @@
+{
+  "classes": {
+    "generated": [
+      "*.lock",
+      "*packages.lock.json",
+      "package-lock.json",
+      "go.sum"
+    ],
+    "build": [
+      "size-budget.json",
+      "scripts/*",
+      ".githooks/*",
+      ".github/*",
+      ".gitignore",
+      ".gitattributes",
+      ".gitleaksignore",
+      "pyproject.toml",
+      ".python-version"
+    ],
+    "product": [
+      "src/*",
+      "migrations/*"
+    ],
+    "test_code": [
+      "tests/*.py",
+      "tests/*.bats"
+    ],
+    "test_data": [
+      "tests/data/*"
+    ],
+    "docs": [
+      "*.md",
+      "docs/*"
+    ]
+  },
+  "max_tracked_files": 46,
+  "max_total_lines": 4600,
+  "max_product_code_lines": 1725,
+  "max_test_code_lines": 1380,
+  "max_test_data_files": 6,
+  "max_test_data_lines": 69,
+  "max_docs_lines": 690,
+  "max_scope_lines": 300,
+  "max_file_lines": 300,
+  "max_line_width": 120,
+  "max_projects": 1,
+  "max_interfaces": 0,
+  "allowed_top_level": [
+    ".githooks",
+    ".github",
+    "docs",
+    "migrations",
+    "scripts",
+    "src",
+    "tests"
+  ],
+  "literal_scan_allow": [
+    {
+      "reason": "input column names are the product's documented vocabulary",
+      "values": [
+        "amount",
+        "currency"
+      ]
+    },
+    {
+      "reason": "SQL type names used by the test schema and the migrations",
+      "values": [
+        "numeric",
+        "text"
+      ]
+    }
+  ],
+  "legacy": {
+    "src/app/report.py": {
+      "lines": 640,
+      "wide_lines": 3
+    }
+  },
+  "reasons": [
+    "2026-11-03 adoption: count budgets at actual + 15%; src/app/report.py recorded as legacy (640 lines, 3 wide).",
+    "2026-11-10 max_test_code_lines 1200 -> 1380: slice 2 estimate +180 test lines, approved in pull request 12."
+  ]
+}

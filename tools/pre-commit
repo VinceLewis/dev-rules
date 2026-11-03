@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Pre-commit hook (dev_rules.md section 6): the size gate, then gitleaks on the staged changes.
+# Canonical as dev-rules tools/pre-commit; copied unchanged to .githooks/pre-commit.
+# Enable it once per clone: git config core.hooksPath .githooks
+set -euo pipefail
+IFS=$'\n\t'
+
+die() {
+  printf 'SETUP: %s\n' "$1" >&2
+  exit 2
+}
+
+main() {
+  command -v python3 >/dev/null || die "python3 is not installed"
+  command -v gitleaks >/dev/null || die "gitleaks is not installed"
+  local root
+  root="$(git rev-parse --show-toplevel)"
+  cd -- "$root" || die "cannot enter $root"
+  python3 scripts/size_gate.py
+  gitleaks git --pre-commit --staged
+}
+
+main "$@"

@@ -14,6 +14,7 @@ Adds to `dev_rules.md` for Python 3.14.
 - Environments and dependencies: `uv`. Dev tools (ruff, the type checker, pytest, hypothesis, testcontainers, pip-audit) go in `[dependency-groups] dev`; run them with `uv run`. Commit `uv.lock`; CI runs `uv sync --locked`. No `requirements.txt`.
 - Format: `ruff format --check`, with `line-length = 120` under `[tool.ruff]` in `pyproject.toml` to match the size gate.
 - Lint: `ruff check` with `[tool.ruff.lint] select = ["E", "F", "B", "I", "UP", "SIM", "S", "PTH"]` and `per-file-ignores = { "tests/**" = ["S101"] }`.
+- No blanket suppressions: each `# noqa:` names the rule and gives a reason (`# noqa: S603 - fixed argv, no shell`); never a bare `# noqa`.
 - Types: `mypy --strict` on `src/` (not pyright, basedpyright or ty); type hints on every public function.
 - Test: `pytest` with `tmp_path` and fixtures for isolation; `pytest.mark.parametrize` with literal cases. Run one test with `uv run pytest tests/test_<module>.py::test_<name>`.
 - Property tests use Hypothesis `@given` with its default settings.
